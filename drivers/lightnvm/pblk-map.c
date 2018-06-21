@@ -29,7 +29,7 @@ static int pblk_map_page_data(struct pblk *pblk, unsigned int sentry,
   struct pblk_emeta *emeta;
   // write context
   struct pblk_w_ctx *w_ctx;
-  // lba 리스트(littel endian)
+  // lba 리스트(little endian)
   __le64 *lba_list;
   //물리 주소
   u64 paddr;
