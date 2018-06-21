@@ -423,10 +423,11 @@ struct pblk_w_err_gc {
 
 struct pblk_line {
   struct pblk *pblk;
-  //
-  unsigned int id;     /* Line number corresponds to the
-                        * block line
-                        */
+  //블록 line에 해당하는 line 번호
+  unsigned int id; /* Line number corresponds to the
+                    * block line
+                    */
+  // unique 인 line 번호
   unsigned int seq_nr; /* Unique line sequence number */
 
   int state; /* PBLK_LINESTATE_X */ // line 상태
@@ -438,7 +439,7 @@ struct pblk_line {
   unsigned long *lun_bitmap; /* Bitmap for LUNs mapped in line */
 
   struct nvm_chk_meta *chks; /* Chunks forming line */
-  
+
   struct pblk_smeta *smeta; /* Start metadata */
   struct pblk_emeta *emeta; /* End medatada */
 
@@ -487,13 +488,16 @@ enum {
 };
 
 struct pblk_line_mgmt {
-  int nr_lines;      /* Total number of full lines */
-  int nr_free_lines; /* Number of full lines in free list */
+  int nr_lines; /* Total number of full lines / 총 라인 수 */
+  int nr_free_lines; /* Number of full lines in free list / free상태인 라인 수*/
 
   /* Free lists - use free_lock */
-  struct list_head free_list;    /* Full lines ready to use */
+  // 사용 가능한 free line list
+  struct list_head free_list; /* Full lines ready to use  */
+  // 손상된 line list
   struct list_head corrupt_list; /* Full lines corrupted */
-  struct list_head bad_list;     /* Full lines bad */
+  // bad line list
+  struct list_head bad_list; /* Full lines bad */
 
   /* GC lists - use gc_lock */
   struct list_head *gc_lists[PBLK_GC_NR_LISTS];
@@ -506,9 +510,13 @@ struct pblk_line_mgmt {
   struct list_head gc_full_list;  /* Full lines ready to GC, no valid */
   struct list_head gc_empty_list; /* Full lines close, all valid */
 
-  struct pblk_line *log_line;  /* Current FTL log line */
+  // 현재 FTL log line
+  struct pblk_line *log_line; /* Current FTL log line */
+  // 현재 data line
   struct pblk_line *data_line; /* Current data line */
-  struct pblk_line *log_next;  /* Next FTL log line */
+  // 다음 FTL log line
+  struct pblk_line *log_next; /* Next FTL log line */
+  // 다음 data line
   struct pblk_line *data_next; /* Next data line */
 
   struct list_head emeta_list; /* Lines queued to schedule emeta */
@@ -589,8 +597,12 @@ struct pblk_addrf {
 
 struct pblk {
   struct nvm_tgt_dev *dev;
+  // gendisk : 파티션정보(struct hd_struct)를 포함한 디스크 정보
   struct gendisk *disk;
 
+  // kernel object : 바이스들은 여러 가지 객체(구조체)로 표현되는데 이들이
+  // 기본적으로 가져야 할 이름과 참조 카운터 및 하이 라키 관계를 표현하기 위해
+  // 여러 개의 필드가 필요하다.
   struct kobject kobj;
 
   struct pblk_lun *luns;
@@ -609,13 +621,17 @@ struct pblk {
 
   int min_write_pgs; /* Minimum amount of pages required by controller */
   int max_write_pgs; /* Maximum amount of pages supported by controller */
+  // 성공적인 읽기를 보장하기 위해 버퍼에 보관해야하는 페이지 수
   int pgs_in_buffer; /* Number of pages that need to be held in buffer to
                       * guarantee successful reads.
                       */
 
+  // 불량 블록을 제외한 장치 용량
   sector_t capacity; /* Device capacity when bad blocks are subtracted */
 
-  int op;      /* Percentage of device used for over-provisioning */
+  // 디바이스의 오버 프로비저닝에 사용되는 %
+  int op; /* Percentage of device used for over-provisioning */
+  // 오버 프로비저닝에 사용되는 블럭 수
   int op_blks; /* Number of blocks used for over-provisioning */
 
   /* pblk provisioning values. Used by rate limiter */

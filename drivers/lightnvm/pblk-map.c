@@ -23,7 +23,8 @@ static int pblk_map_page_data(struct pblk *pblk, unsigned int sentry,
                               unsigned long *lun_bitmap,
                               struct pblk_sec_meta *meta_list,
                               unsigned int valid_secs) {
-  // line //pblk_line_get_data
+  // line //pblk_line_get_data 현재의 data line을 line management로부터
+  // 불러온다.
   struct pblk_line *line = pblk_line_get_data(pblk);
   // end metadata
   struct pblk_emeta *emeta;
@@ -59,7 +60,8 @@ static int pblk_map_page_data(struct pblk *pblk, unsigned int sentry,
   // end metadata 에서 lba list를 가져온다.
   lba_list = emeta_to_lbas(pblk, emeta->buf);
 
-  // line에 해당하는 물리 주소를 가져온다. //pblk_alloc_page
+  // line의 비어있는 sector부터 nr_secs 만큼 비트를 set 하고 비트를 set한 첫
+  // sector의 주소를 반환
   paddr = pblk_alloc_page(pblk, line, nr_secs);
 
   for (i = 0; i < nr_secs; i++, paddr++) {
@@ -76,6 +78,11 @@ static int pblk_map_page_data(struct pblk *pblk, unsigned int sentry,
      * entry we are setting up for submission without taking any
      * lock or memory barrier.
      */
+    // 쓰기 버퍼에서 목표 바이오 완료를위한 컨텍스트를 작성하십시오. 기입 버퍼는
+    // 동기 백 포인터에 의해 보호되고있어, 단일의 기입 해 thread는 한 번에 각
+    // 특정 엔트리에 액세스 할 수 있습니다. 따라서 잠금 또는 메모리 장벽을
+    // 취하지 않고 제출을 위해 설정하는 항목의 컨텍스트를 수정하는 것이
+    // 안전합니다.
     //유효한 sector 수 만큼
     if (i < valid_secs) {
       kref_get(&line->ref);
@@ -113,7 +120,9 @@ void pblk_map_rq(struct pblk *pblk, struct nvm_rq *rqd, unsigned int sentry,
   int i;
 
   for (i = off; i < rqd->nr_ppas; i += min) {
-    map_secs = (i + min > valid_secs) ? (valid_secs % min) : m in;
+    // mapping 할 섹터 수를 결정, 최소 맵핑 수 + i 가 가능한 섹터 수보다 크다면
+    // 가능한 섹터 수만 매핑, 충분하다면 최소 매핑 수만큼만 매핑
+    map_secs = (i + min > valid_secs) ? (valid_secs % min) : min;
     // pblk_map_page_data가 정상적으로 작동하지 않았을 때
     if (pblk_map_page_data(pblk, sentry + i, &rqd->ppa_list[i], lun_bitmap,
                            &meta_list[i], map_secs)) {

@@ -540,16 +540,22 @@ u64 __pblk_alloc_page(struct pblk *pblk, struct pblk_line *line, int nr_secs) {
   lockdep_assert_held(&line->lock);
 
   /* logic error: ppa out-of-bounds. Prevent generating bad address */
+  // 라인의 현재 섹터 + write할 섹터 수가 line 당 섹터 수보다 크다면 오류 를
+  // 출력하고 write할 섹터 수를 라인 당 섹터 수 - 현재 섹터수 = 라인에 남은 섹터
+  // 수
   if (line->cur_sec + nr_secs > pblk->lm.sec_per_line) {
     WARN(1, "pblk: page allocation out of bounds\n");
     nr_secs = pblk->lm.sec_per_line - line->cur_sec;
   }
 
+  // 현재 섹터에서 시작해서 첫 zero bit를 찾아 현재 섹터로 저장한다.
   line->cur_sec = addr = find_next_zero_bit(
       line->map_bitmap, pblk->lm.sec_per_line, line->cur_sec);
+  // 라인의 map_bitmap의 현재 섹터부터 bit를 set하고 0을 출력한다.
   for (i = 0; i < nr_secs; i++, line->cur_sec++)
     WARN_ON(test_and_set_bit(line->cur_sec, line->map_bitmap));
 
+  //첫 zero bit의 위치 반환
   return addr;
 }
 
