@@ -142,6 +142,8 @@ static void pblk_map_remaining(struct pblk *pblk, struct ppa_addr *ppa)
 
 static void pblk_prepare_resubmit(struct pblk *pblk, unsigned int sentry,
 				  unsigned int nr_entries)
+//pblk_submit_write에서 호출한다
+//resubmit하기 위한 사전작업
 {
 	struct pblk_rb *rb = &pblk->rwb;
 	struct pblk_rb_entry *entry;
@@ -296,6 +298,8 @@ static void pblk_end_io_write_meta(struct nvm_rq *rqd)
 static int pblk_alloc_w_rq(struct pblk *pblk, struct nvm_rq *rqd,
 			   unsigned int nr_secs,
 			   nvm_end_io_fn(*end_io))
+//pblk_submit_meta_io에서 호출된다
+//pblk_setup_w_rq에서 호출된다
 {
 	struct nvm_tgt_dev *dev = pblk->dev;
 
@@ -319,6 +323,7 @@ static int pblk_alloc_w_rq(struct pblk *pblk, struct nvm_rq *rqd,
 
 static int pblk_setup_w_rq(struct pblk *pblk, struct nvm_rq *rqd,
 			   struct ppa_addr *erase_ppa)
+//pblk_submit_io_set에서 호출된다
 {
 	struct pblk_line_meta *lm = &pblk->lm;
 	struct pblk_line *e_line = pblk_line_get_erase(pblk);
@@ -351,10 +356,12 @@ static int pblk_setup_w_rq(struct pblk *pblk, struct nvm_rq *rqd,
 
 static int pblk_calc_secs_to_sync(struct pblk *pblk, unsigned int secs_avail,
 				  unsigned int secs_to_flush)
+//pblk_submit_write에서 쓰인다.
 {
 	int secs_to_sync;
 
 	secs_to_sync = pblk_calc_secs(pblk, secs_avail, secs_to_flush);
+	//avail한 시간부터 flush까지 sync를 맞추는데 걸리는 시간
 
 #ifdef CONFIG_NVM_DEBUG
 	if ((!secs_to_sync && secs_to_flush)
@@ -369,19 +376,20 @@ static int pblk_calc_secs_to_sync(struct pblk *pblk, unsigned int secs_avail,
 }
 
 int pblk_submit_meta_io(struct pblk *pblk, struct pblk_line *meta_line)
+//pblk_submit_io_set에서 호출된다
 {
 	struct nvm_tgt_dev *dev = pblk->dev;
 	struct nvm_geo *geo = &dev->geo;
 	struct pblk_line_mgmt *l_mg = &pblk->l_mg;
 	struct pblk_line_meta *lm = &pblk->lm;
 	struct pblk_emeta *emeta = meta_line->emeta;
-	struct pblk_g_ctx *m_ctx;
+	struct pblk_g_ctx *m_ctx; //read context
 	struct bio *bio;
 	struct nvm_rq *rqd;
 	void *data;
 	u64 paddr;
 	int rq_ppas = pblk->min_write_pgs;
-	int id = meta_line->id;
+	int id = meta_line->id; //line number corresponds to the block line
 	int rq_len;
 	int i, j;
 	int ret;
@@ -391,11 +399,11 @@ int pblk_submit_meta_io(struct pblk *pblk, struct pblk_line *meta_line)
 	m_ctx = nvm_rq_to_pdu(rqd);
 	m_ctx->private = meta_line;
 
-	rq_len = rq_ppas * geo->csecs;
-	data = ((void *)emeta->buf) + emeta->mem;
+	rq_len = rq_ppas * geo->csecs; //pace 크기 *sector 크기
+	data = ((void *)emeta->buf) + emeta->mem; //buffer + write offset
 
 	bio = pblk_bio_map_addr(pblk, data, rq_ppas, rq_len,
-					l_mg->emeta_alloc_type, GFP_KERNEL);
+					l_mg->emeta_alloc_type, GFP_KERNEL); //bio에 주소 mapping
 	if (IS_ERR(bio)) {
 		pr_err("pblk: failed to map emeta io");
 		ret = PTR_ERR(bio);
@@ -450,6 +458,8 @@ fail_free_rqd:
 static inline bool pblk_valid_meta_ppa(struct pblk *pblk,
 				       struct pblk_line *meta_line,
 				       struct nvm_rq *data_rqd)
+//pblk_should_submit_meta_io에서 호출된다
+//metadata의 ppa가 유효한지 검사
 {
 	struct nvm_tgt_dev *dev = pblk->dev;
 	struct nvm_geo *geo = &dev->geo;
@@ -485,10 +495,11 @@ static inline bool pblk_valid_meta_ppa(struct pblk *pblk,
 
 static struct pblk_line *pblk_should_submit_meta_io(struct pblk *pblk,
 						    struct nvm_rq *data_rqd)
+//pblk_submit_io_set에서 호출된다
 {
-	struct pblk_line_meta *lm = &pblk->lm;
-	struct pblk_line_mgmt *l_mg = &pblk->l_mg;
-	struct pblk_line *meta_line;
+	struct pblk_line_meta *lm = &pblk->lm; //line metadata
+	struct pblk_line_mgmt *l_mg = &pblk->l_mg; //line management
+	struct pblk_line *meta_line; //line array
 
 	spin_lock(&l_mg->close_lock);
 retry:
@@ -497,17 +508,20 @@ retry:
 		return NULL;
 	}
 	meta_line = list_first_entry(&l_mg->emeta_list, struct pblk_line, list);
-	if (meta_line->emeta->mem >= lm->emeta_len[0])
+	if (meta_line->emeta->mem >= lm->emeta_len[0]) 
+	//write offset이 emeta length보다 클 경우
 		goto retry;
 	spin_unlock(&l_mg->close_lock);
 
-	if (!pblk_valid_meta_ppa(pblk, meta_line, data_rqd))
+	if (!pblk_valid_meta_ppa(pblk, meta_line, data_rqd)) //주소가 유효한가
 		return NULL;
 
 	return meta_line;
 }
 
 static int pblk_submit_io_set(struct pblk *pblk, struct nvm_rq *rqd)
+//pblk_submit_write에서 호출된다
+//write IO를 PPA로 변환해 submit한다
 {
 	struct ppa_addr erase_ppa;
 	struct pblk_line *meta_line;
@@ -576,13 +590,14 @@ static int pblk_submit_write(struct pblk *pblk)
 	unsigned long pos;
 	unsigned int resubmit;
 
-	spin_lock(&pblk->resubmit_lock);
-	resubmit = !list_empty(&pblk->resubmit_list);
-	spin_unlock(&pblk->resubmit_lock);
+	spin_lock(&pblk->resubmit_lock); //resubmit list를 spin lock 시켜둠
+	resubmit = !list_empty(&pblk->resubmit_list); 
+	//resubmit list에 값이 들어있으면 resubmit=true, 없으면 false
+	spin_unlock(&pblk->resubmit_lock); //resubmit list의 spin lock을 해제함
 
 	/* Resubmit failed writes first */
 	if (resubmit) {
-		struct pblk_c_ctx *r_ctx;
+		struct pblk_c_ctx *r_ctx; //write buffer completion context 
 
 		spin_lock(&pblk->resubmit_lock);
 		r_ctx = list_first_entry(&pblk->resubmit_list,
@@ -603,12 +618,17 @@ static int pblk_submit_write(struct pblk *pblk)
 		 * flushes (bios without data) will be cleared on
 		 * the cache threads
 		 */
-		secs_avail = pblk_rb_read_count(&pblk->rwb);
-		if (!secs_avail)
+		secs_avail = pblk_rb_read_count(&pblk->rwb); 
+		//write offset과 read offset의 차이값(즉, write해야할 sec count)
+		//write offset은 next writable point값, 
+		//read offset은 submit된 마지막 entry point값
+		if (!secs_avail) //write할 게 없으면
 			return 1;
 
+		// Calculate how many sectors to submit up to the current flush point.
 		secs_to_flush = pblk_rb_flush_point_count(&pblk->rwb);
 		if (!secs_to_flush && secs_avail < pblk->min_write_pgs)
+		// Minimum amount of pages required by controller 보다 작으면 수행하지 않는다
 			return 1;
 
 		secs_to_sync = pblk_calc_secs_to_sync(pblk, secs_avail,
@@ -621,6 +641,7 @@ static int pblk_submit_write(struct pblk *pblk)
 		secs_to_com = (secs_to_sync > secs_avail) ?
 			secs_avail : secs_to_sync;
 		pos = pblk_rb_read_commit(&pblk->rwb, secs_to_com);
+		//마지막으로 submit된 point이후부터 secs_to_com만큼 write
 	}
 
 	bio = bio_alloc(GFP_KERNEL, secs_to_sync);
@@ -628,7 +649,7 @@ static int pblk_submit_write(struct pblk *pblk)
 	bio->bi_iter.bi_sector = 0; /* internal bio */
 	bio_set_op_attrs(bio, REQ_OP_WRITE, 0);
 
-	rqd = pblk_alloc_rqd(pblk, PBLK_WRITE);
+	rqd = pblk_alloc_rqd(pblk, PBLK_WRITE); //write request를 생성
 	rqd->bio = bio;
 
 	if (pblk_rb_read_to_bio(&pblk->rwb, rqd, pos, secs_to_sync,
@@ -637,7 +658,7 @@ static int pblk_submit_write(struct pblk *pblk)
 		goto fail_put_bio;
 	}
 
-	if (pblk_submit_io_set(pblk, rqd))
+	if (pblk_submit_io_set(pblk, rqd)) //IO submit을 한다
 		goto fail_free_bio;
 
 #ifdef CONFIG_NVM_DEBUG
@@ -659,6 +680,7 @@ int pblk_write_ts(void *data)
 {
 	struct pblk *pblk = data;
 
+	//멈춰야하는 상황이 아니라면 계속 write수행
 	while (!kthread_should_stop()) {
 		if (!pblk_submit_write(pblk))
 			continue;
