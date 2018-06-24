@@ -78,11 +78,11 @@ enum {
 };
 
 enum {
-  PBLK_BLK_ST_OPEN = 0x1,
-  PBLK_BLK_ST_CLOSED = 0x2,
+  PBLK_BLK_ST_OPEN = 0x1,   //블록 state OPEN
+  PBLK_BLK_ST_CLOSED = 0x2, //블록 state CLOSED
 };
 
-struct pblk_sec_meta {
+struct pblk_sec_meta { // sector meta
   u64 reserved;
   __le64 lba;
 };
@@ -90,6 +90,9 @@ struct pblk_sec_meta {
 /* The number of GC lists and the rate-limiter states go together. This way the
  * rate-limiter can dictate how much GC is needed based on resource utilization.
  */
+// GC 목록의 수와 속도 제한 기 상태가 함께 나타납니다. 이런 식으로
+// rate-limiter는 리소스 사용률에 따라 얼마나 많은 GC가 필요한지를 결정할 수
+// 있습니다.
 #define PBLK_GC_NR_LISTS 4
 
 enum {

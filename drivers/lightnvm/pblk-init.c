@@ -582,6 +582,7 @@ static void *pblk_chunk_get_meta(struct pblk *pblk) {
     return pblk_chunk_get_info(pblk);
 }
 
+// LUN INIT
 static int pblk_luns_init(struct pblk *pblk) {
   struct nvm_tgt_dev *dev = pblk->dev;
   struct nvm_geo *geo = &dev->geo;
