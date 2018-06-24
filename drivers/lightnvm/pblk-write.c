@@ -27,6 +27,7 @@ static unsigned long pblk_end_w_bio(struct pblk *pblk, struct nvm_rq *rqd,
   for (i = 0; i < c_ctx->nr_valid; i++) {
     struct pblk_w_ctx *w_ctx;
     int pos = c_ctx->sentry + i;
+
     int flags;
 
     w_ctx = pblk_rb_w_ctx(rwb, pos);
