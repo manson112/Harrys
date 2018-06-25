@@ -1148,30 +1148,37 @@ static sector_t pblk_capacity(void *private) {
 
 static void *pblk_init(struct nvm_tgt_dev *dev, struct gendisk *tdisk,
                        int flags) {
+  // DEVICE 정보
   struct nvm_geo *geo = &dev->geo;
-  struct request_queue *bqueue = dev->q;
-  struct request_queue *tqueue = tdisk->queue;
+  struct request_queue *bqueue = dev->q;       // dev의 request queue
+  struct request_queue *tqueue = tdisk->queue; // gendisk의 request queue
   struct pblk *pblk;
   int ret;
 
   /* pblk supports 1.2 and 2.0 versions */
+  // OCSSD가 1.2혹은 2.0 버전이 아닌 경우
   if (!(geo->version == NVM_OCSSD_SPEC_12 ||
         geo->version == NVM_OCSSD_SPEC_20)) {
     pr_err("pblk: OCSSD version not supported (%u)\n", geo->version);
     return ERR_PTR(-EINVAL);
   }
 
+  // DEVICE version이 1.2 이고 dom이라는 정보가 NVM_RSP_L2P (HW responsibility)
+  // 일 경우
   if (geo->version == NVM_OCSSD_SPEC_12 && geo->dom & NVM_RSP_L2P) {
     pr_err("pblk: host-side L2P table not supported. (%x)\n", geo->dom);
     return ERR_PTR(-EINVAL);
   }
 
+  // 메모리를 할당하고 0으로 리셋
   pblk = kzalloc(sizeof(struct pblk), GFP_KERNEL);
   if (!pblk)
     return ERR_PTR(-ENOMEM);
 
+  // pblk의 dev는 nvm_tgt_dev
   pblk->dev = dev;
   pblk->disk = tdisk;
+  // pblk의 상태
   pblk->state = PBLK_STATE_RUNNING;
   pblk->gc.gc_enabled = 0;
 
@@ -1194,7 +1201,7 @@ static void *pblk_init(struct nvm_tgt_dev *dev, struct gendisk *tdisk,
   atomic_long_set(&pblk->recov_gc_writes, 0);
   atomic_long_set(&pblk->recov_gc_reads, 0);
 #endif
-
+  //각종 값을들을 0으로 초기화
   atomic_long_set(&pblk->read_failed, 0);
   atomic_long_set(&pblk->read_empty, 0);
   atomic_long_set(&pblk->read_high_ecc, 0);
@@ -1202,30 +1209,35 @@ static void *pblk_init(struct nvm_tgt_dev *dev, struct gendisk *tdisk,
   atomic_long_set(&pblk->write_failed, 0);
   atomic_long_set(&pblk->erase_failed, 0);
 
+  // pblk core init
   ret = pblk_core_init(pblk);
   if (ret) {
     pr_err("pblk: could not initialize core\n");
     goto fail;
   }
 
+  // pblk lines init
   ret = pblk_lines_init(pblk);
   if (ret) {
     pr_err("pblk: could not initialize lines\n");
     goto fail_free_core;
   }
 
+  // pblk rwb init
   ret = pblk_rwb_init(pblk);
   if (ret) {
     pr_err("pblk: could not initialize write buffer\n");
     goto fail_free_lines;
   }
 
+  // pblk l2p init
   ret = pblk_l2p_init(pblk, flags & NVM_TARGET_FACTORY);
   if (ret) {
     pr_err("pblk: could not initialize maps\n");
     goto fail_free_rwb;
   }
 
+  // pblk writer init
   ret = pblk_writer_init(pblk);
   if (ret) {
     if (ret != -EINTR)
@@ -1233,6 +1245,7 @@ static void *pblk_init(struct nvm_tgt_dev *dev, struct gendisk *tdisk,
     goto fail_free_l2p;
   }
 
+  // pblk gc init
   ret = pblk_gc_init(pblk);
   if (ret) {
     pr_err("pblk: could not initialize gc\n");
@@ -1240,13 +1253,19 @@ static void *pblk_init(struct nvm_tgt_dev *dev, struct gendisk *tdisk,
   }
 
   /* inherit the size from the underlying device */
+  // 장치에서 크기를 상속 받는다.
+  // gendisk의 logical block size를 nvm tgt dev의 physical block size로 만든다.
   blk_queue_logical_block_size(tqueue, queue_physical_block_size(bqueue));
+  // tqueue->limits->max_hw_sectors = bqueue.limits->max_hw_sectors
   blk_queue_max_hw_sectors(tqueue, queue_max_hw_sectors(bqueue));
 
+  // write back cache on, fua false
   blk_queue_write_cache(tqueue, true, false);
 
+  // chunk 당 sector 수 * sector size = chunk size
   tqueue->limits.discard_granularity = geo->clba * geo->csecs;
   tqueue->limits.discard_alignment = 0;
+
   blk_queue_max_discard_sectors(tqueue, UINT_MAX >> 9);
   blk_queue_flag_set(QUEUE_FLAG_DISCARD, tqueue);
 
@@ -1298,8 +1317,11 @@ static int __init pblk_module_init(void) {
   pblk_bio_set = bioset_create(BIO_POOL_SIZE, 0, 0);
   if (!pblk_bio_set)
     return -ENOMEM;
+
+  // nvm target type으로 tt_pblk를 register한다.
   ret = nvm_register_tgt_type(&tt_pblk);
   if (ret)
+    // register 오류 발생
     bioset_free(pblk_bio_set);
   return ret;
 }

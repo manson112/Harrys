@@ -78,12 +78,12 @@ static int pblk_map_page_data(struct pblk *pblk, unsigned int sentry,
      * entry we are setting up for submission without taking any
      * lock or memory barrier.
      */
-    // 쓰기 버퍼에서 목표 바이오 완료를위한 컨텍스트를 작성하십시오. 기입 버퍼는
+    // 쓰기 버퍼에서 목표 bio 완료를위한 컨텍스트를 작성하십시오. 기입 버퍼는
     // 동기 백 포인터에 의해 보호되고있어, 단일의 기입 해 thread는 한 번에 각
     // 특정 엔트리에 액세스 할 수 있습니다. 따라서 잠금 또는 메모리 장벽을
     // 취하지 않고 제출을 위해 설정하는 항목의 컨텍스트를 수정하는 것이
     // 안전합니다.
-    //유효한 sector 수 만큼
+    // 유효한 sector 수 만큼
     if (i < valid_secs) {
       kref_get(&line->ref);
       // pblk의 ring write buffer의 position(sentry+i)에 해당하는 write context
