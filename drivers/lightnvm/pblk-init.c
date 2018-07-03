@@ -90,9 +90,11 @@ static blk_qc_t pblk_make_rq(struct request_queue *q, struct bio *bio) {
 static size_t pblk_trans_map_size(struct pblk *pblk) {
   int entry_size = 8;
 
+  // address format size가 32보다 작으면
   if (pblk->addrf_len < 32)
     entry_size = 4;
 
+  // entry size * rate limiter의 sector 수
   return entry_size * pblk->rl.nr_secs;
 }
 
@@ -113,8 +115,11 @@ static int pblk_l2p_recover(struct pblk *pblk, bool factory_init) {
   struct pblk_line *line = NULL;
 
   if (factory_init) {
+    // 공장 초기화
+    // pblk에 pblk uuid를 설정한다.
     pblk_setup_uuid(pblk);
   } else {
+
     line = pblk_recov_l2p(pblk);
     if (IS_ERR(line)) {
       pr_err("pblk: could not recover l2p table\n");
@@ -139,22 +144,28 @@ static int pblk_l2p_recover(struct pblk *pblk, bool factory_init) {
   return 0;
 }
 
+// L2P init
 static int pblk_l2p_init(struct pblk *pblk, bool factory_init) {
   sector_t i;
   struct ppa_addr ppa;
   size_t map_size;
   int ret = 0;
 
+  // map size의 pblk의 trans map size를 계산해서 가져온다.
   map_size = pblk_trans_map_size(pblk);
+  // trans map allocation
   pblk->trans_map = vmalloc(map_size);
   if (!pblk->trans_map)
     return -ENOMEM;
 
+  // ppa->ppa를 ADDR_EMPTY로 set
   pblk_ppa_set_empty(&ppa);
 
+  // pblk->trans_map에 각 섹터의 ppa를 채워넣는다
   for (i = 0; i < pblk->rl.nr_secs; i++)
     pblk_trans_map_set(pblk, i, ppa);
 
+  // pblk_l2p table recover
   ret = pblk_l2p_recover(pblk, factory_init);
   if (ret)
     vfree(pblk->trans_map);

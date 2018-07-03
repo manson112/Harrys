@@ -1144,9 +1144,11 @@ static inline struct ppa_addr pblk_trans_map_get(struct pblk *pblk,
 
 static inline void pblk_trans_map_set(struct pblk *pblk, sector_t lba,
                                       struct ppa_addr ppa) {
+  // addrf_len 이 32보다 작다면
   if (pblk->addrf_len < 32) {
     u32 *map = (u32 *)pblk->trans_map;
 
+    // map의 sector 의 주소를 ppa64 -> ppa32로 바꾼다.
     map[lba] = pblk_ppa64_to_ppa32(pblk, ppa);
   } else {
     u64 *map = (u64 *)pblk->trans_map;

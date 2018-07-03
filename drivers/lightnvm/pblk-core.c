@@ -821,6 +821,7 @@ free_ppa_list:
   return ret;
 }
 
+// line의 smeta
 int pblk_line_read_smeta(struct pblk *pblk, struct pblk_line *line) {
   u64 bpaddr = pblk_line_smeta_start(pblk, line);
 
@@ -1132,6 +1133,7 @@ static int pblk_line_prepare(struct pblk *pblk, struct pblk_line *line) {
   }
 
   /* Bad blocks do not need to be erased */
+  // line->blk_bitmap을 line->erase_bitmap으로 복사
   bitmap_copy(line->erase_bitmap, line->blk_bitmap, lm->blk_per_line);
 
   spin_lock(&line->lock);
@@ -1143,6 +1145,7 @@ static int pblk_line_prepare(struct pblk *pblk, struct pblk_line *line) {
     blk_to_erase = pblk_prepare_new_line(pblk, line);
     line->state = PBLK_LINESTATE_FREE;
   } else {
+
     blk_to_erase = blk_in_line;
   }
 
@@ -1180,6 +1183,7 @@ fail_free_map_bitmap:
   return ret;
 }
 
+//
 int pblk_line_recov_alloc(struct pblk *pblk, struct pblk_line *line) {
   struct pblk_line_mgmt *l_mg = &pblk->l_mg;
   int ret;
