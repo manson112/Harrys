@@ -147,6 +147,7 @@ void pblk_map_erase_rq(struct pblk *pblk, struct nvm_rq *rqd,
   int i, erase_lun;
 
   for (i = 0; i < rqd->nr_ppas; i += min) {
+    // i+min이 vs보다 크면 남은 sector 수 만큼, 작으면 min 만큼
     map_secs = (i + min > valid_secs) ? (valid_secs % min) : min;
     if (pblk_map_page_data(pblk, sentry + i, &rqd->ppa_list[i], lun_bitmap,
                            &meta_list[i], map_secs)) {
@@ -160,7 +161,9 @@ void pblk_map_erase_rq(struct pblk *pblk, struct nvm_rq *rqd,
     /* line can change after page map. We might also be writing the
      * last line.
      */
+    //다음 data line
     e_line = pblk_line_get_erase(pblk);
+    //다음 data line이 없으면 pblk_map_rq
     if (!e_line)
       return pblk_map_rq(pblk, rqd, sentry, lun_bitmap, valid_secs, i + min);
 

@@ -107,18 +107,23 @@ enum {
 #define pblk_dma_ppa_size (sizeof(u64) * PBLK_MAX_REQ_ADDRS)
 
 /* write buffer completion context */
+// write buffer의 completion context
 struct pblk_c_ctx {
   struct list_head list; /* Head for out-of-order completion */
 
+  //현재 request에서 사용된 lun
   unsigned long *lun_bitmap; /* Luns used on current request */
   unsigned int sentry;
   unsigned int nr_valid;
+
+  // padding 처리된 수
   unsigned int nr_padded;
 };
 
 /* read context */
 struct pblk_g_ctx {
   void *private;
+  // 시작 시간
   unsigned long start_time;
   u64 lba;
 };
@@ -134,6 +139,7 @@ struct pblk_pad_rq {
 struct pblk_rec_ctx {
   struct pblk *pblk;
   struct nvm_rq *rqd;
+
   struct work_struct ws_rec;
 };
 
@@ -396,13 +402,6 @@ struct line_emeta {
   __le64 bb_bitmap[];   /* Updated bad block bitmap for line */
 };
 
-/* Write amplification counters stored on media */
-struct wa_counters {
-  __le64 user; /* Number of user written sectors */
-  __le64 gc;   /* Number of sectors written by GC*/
-  __le64 pad;  /* Number of padded sectors */
-};
-
 struct pblk_emeta {
   struct line_emeta *buf;  /* emeta buffer in media format */
   int mem;                 /* Write offset - points to next
@@ -413,6 +412,13 @@ struct pblk_emeta {
                             * persisted to media
                             */
   unsigned int nr_entries; /* Number of emeta entries */
+};
+
+/* Write amplification counters stored on media */
+struct wa_counters {
+  __le64 user; /* Number of user written sectors */
+  __le64 gc;   /* Number of sectors written by GC*/
+  __le64 pad;  /* Number of padded sectors */
 };
 
 struct pblk_smeta {
@@ -532,6 +538,8 @@ struct pblk_line_mgmt {
   /* Pre-allocated metadata for data lines */
   struct pblk_smeta *sline_meta[PBLK_DATA_LINES];
   struct pblk_emeta *eline_meta[PBLK_DATA_LINES];
+  // 0000 0000 0000 0000 0000 0000 0000 0000
+  // 0000 0000 0000 0000 0000 0000 0000 '0000' << 4비트만 사용
   unsigned long meta_bitmap;
 
   /* Helpers for fast bitmap calculations */
@@ -958,7 +966,7 @@ static inline void *emeta_to_wa(struct pblk_line_meta *lm,
                                 struct line_emeta *emeta) {
   return emeta->bb_bitmap + lm->blk_bitmap_len;
 }
-
+//[1]: struct line_emeta + bb_bitmap + struct wa_counters
 static inline void *emeta_to_lbas(struct pblk *pblk, struct line_emeta *emeta) {
   return ((void *)emeta + pblk->lm.emeta_len[1]);
 }
@@ -1001,6 +1009,7 @@ static inline struct ppa_addr addr_to_gen_ppa(struct pblk *pblk, u64 paddr,
     ppa.g.pl = (paddr & ppaf->pln_mask) >> ppaf->pln_offset;
     ppa.g.sec = (paddr & ppaf->sec_mask) >> ppaf->sec_offset;
   } else {
+    // unaligned address format
     struct pblk_addrf *uaddrf = &pblk->uaddrf;
     int secs, chnls, luns;
 
@@ -1008,6 +1017,7 @@ static inline struct ppa_addr addr_to_gen_ppa(struct pblk *pblk, u64 paddr,
 
     ppa.m.chk = line_id;
 
+    // paddr/uaddrf->sec_stripe, 몫 = paddr, 나머지 = secs
     paddr = div_u64_rem(paddr, uaddrf->sec_stripe, &secs);
     ppa.m.sec = secs;
 

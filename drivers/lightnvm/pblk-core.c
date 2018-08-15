@@ -350,21 +350,32 @@ struct list_head *pblk_line_gc_list(struct pblk *pblk, struct pblk_line *line) {
   int vsc = le32_to_cpu(*line->vsc);
 
   lockdep_assert_held(&line->lock);
-
+  /* w_err_gc : Write error gc recovery metadata */
+  //    struct pblk_w_err_gc {
+  //      int has_write_err;
+  //      __le64 *lba_list;
+  //    };
   if (line->w_err_gc->has_write_err) {
+    // LINE GC WRITE ERROR
     if (line->gc_group != PBLK_LINEGC_WERR) {
       line->gc_group = PBLK_LINEGC_WERR;
+      /* Write err recovery list */
       move_list = &l_mg->gc_werr_list;
+      // rl->werr_line++;
       pblk_rl_werr_line_in(&pblk->rl);
     }
   } else if (!vsc) {
+    // valid sector count == 0 일 때
     if (line->gc_group != PBLK_LINEGC_FULL) {
       line->gc_group = PBLK_LINEGC_FULL;
+      //모든 라인이 GC 될 준비가 되었음을 의미
       move_list = &l_mg->gc_full_list;
     }
   } else if (vsc < lm->high_thrs) {
+    /* vsc < Threshold for GC high list */
     if (line->gc_group != PBLK_LINEGC_HIGH) {
       line->gc_group = PBLK_LINEGC_HIGH;
+      /* Full lines ready to GC, high isc */
       move_list = &l_mg->gc_high_list;
     }
   } else if (vsc < lm->mid_thrs) {
@@ -380,11 +391,14 @@ struct list_head *pblk_line_gc_list(struct pblk *pblk, struct pblk_line *line) {
   } else if (vsc == line->sec_in_line) {
     if (line->gc_group != PBLK_LINEGC_EMPTY) {
       line->gc_group = PBLK_LINEGC_EMPTY;
+      /* Full lines close, all valid */
       move_list = &l_mg->gc_empty_list;
     }
   } else {
+    // 모든 라인이 corrupt
     line->state = PBLK_LINESTATE_CORRUPT;
     line->gc_group = PBLK_LINEGC_NONE;
+    /* Full lines corrupted */
     move_list = &l_mg->corrupt_list;
     pr_err("pblk: corrupted vsc for line %d, vsc:%d (%d/%d/%d)\n", line->id,
            vsc, line->sec_in_line, lm->high_thrs, lm->mid_thrs);
@@ -726,11 +740,13 @@ u64 pblk_line_smeta_start(struct pblk *pblk, struct pblk_line *line) {
   struct pblk_line_meta *lm = &pblk->lm;
   int bit;
 
+  // 정상 block은 line->blk_bitmap 에 set 되어있다
   /* This usually only happens on bad lines */
   bit = find_first_zero_bit(line->blk_bitmap, lm->blk_per_line);
   if (bit >= lm->blk_per_line)
     return -1;
 
+  //첫번 째 0 bit index * optimal write size
   return bit * geo->ws_opt;
 }
 
@@ -886,19 +902,28 @@ int pblk_line_erase(struct pblk *pblk, struct pblk_line *line) {
   /* Erase only good blocks, one at a time */
   do {
     spin_lock(&line->lock);
+    /* line->erase_bitmap : Bitmap for erased blocks */
+    // erase bitmap에서  bit + 1 부터 lm->blk_per_line 까지 첫번째 찾은 0의
+    // index를 반환
     bit = find_next_zero_bit(line->erase_bitmap, lm->blk_per_line, bit + 1);
     if (bit >= lm->blk_per_line) {
       spin_unlock(&line->lock);
       break;
     }
 
+    // bit에 해당하는 block의 ppa를 가져와서
+    // ppa에 현재 line의 id를 할당한다.
     ppa = pblk->luns[bit].bppa; /* set ch and lun */
     ppa.a.blk = line->id;
 
+    /* line->left_eblks : Blocks left for erasing */
     atomic_dec(&line->left_eblks);
+
+    // erase_bitmap 에서 현재 블록을 1로 set
     WARN_ON(test_and_set_bit(bit, line->erase_bitmap));
     spin_unlock(&line->lock);
 
+    // line erase
     ret = pblk_blk_erase_sync(pblk, ppa);
     if (ret) {
       pr_err("pblk: failed to erase line %d\n", line->id);
@@ -1845,11 +1870,14 @@ void pblk_update_map(struct pblk *pblk, sector_t lba, struct ppa_addr ppa) {
   }
 
   spin_lock(&pblk->trans_lock);
+  // pblk trans map에서 lba에 해당하는 ppa를 불러온다.
   ppa_l2p = pblk_trans_map_get(pblk, lba);
 
+  // ppa_l2p가 cache되어있지 않고, 비어있지 않은 경우
   if (!pblk_addr_in_cache(ppa_l2p) && !pblk_ppa_empty(ppa_l2p))
     pblk_map_invalidate(pblk, ppa_l2p);
 
+  // pblk trans map에서 lba에 해당하는 ppa를 set해준다.
   pblk_trans_map_set(pblk, lba, ppa);
   spin_unlock(&pblk->trans_lock);
 }

@@ -119,7 +119,6 @@ static int pblk_l2p_recover(struct pblk *pblk, bool factory_init) {
     // pblk에 pblk uuid를 설정한다.
     pblk_setup_uuid(pblk);
   } else {
-
     line = pblk_recov_l2p(pblk);
     if (IS_ERR(line)) {
       pr_err("pblk: could not recover l2p table\n");
@@ -162,6 +161,7 @@ static int pblk_l2p_init(struct pblk *pblk, bool factory_init) {
   pblk_ppa_set_empty(&ppa);
 
   // pblk->trans_map에 각 섹터의 ppa를 채워넣는다
+  // pblk->trans_map 에는 ppa가 저장됨
   for (i = 0; i < pblk->rl.nr_secs; i++)
     pblk_trans_map_set(pblk, i, ppa);
 
@@ -606,6 +606,7 @@ static int pblk_luns_init(struct pblk *pblk) {
     return -EINVAL;
   }
 
+  // pblk->luns allocation
   pblk->luns = kcalloc(geo->all_luns, sizeof(struct pblk_lun), GFP_KERNEL);
   if (!pblk->luns)
     return -ENOMEM;
@@ -748,8 +749,17 @@ static int pblk_setup_line_meta_20(struct pblk *pblk, struct pblk_line *line,
     chunk = &line->chks[pos];
 
     ppa.m.chk = line->id;
+    // ??
     chunk_meta = pblk_chunk_get_off(pblk, meta, ppa);
-
+    // struct nvm_chk_meta {
+    //   u8 state;
+    //   u8 type;
+    //   u8 wi;
+    //   u8 rsvd[5];
+    //   u64 slba;
+    //   u64 cnlb;
+    //   u64 wp;
+    // };
     chunk->state = chunk_meta->state;
     chunk->type = chunk_meta->type;
     chunk->wi = chunk_meta->wi;
@@ -781,7 +791,7 @@ static long pblk_setup_line_meta(struct pblk *pblk, struct pblk_line *line,
   long nr_bad_chks, chk_in_line;
 
   line->pblk = pblk;
-  line->id = line_id;
+  line->id = line_id; // i
   line->type = PBLK_LINETYPE_FREE;
   line->state = PBLK_LINESTATE_NEW;
   line->gc_group = PBLK_LINEGC_NONE;
@@ -791,12 +801,14 @@ static long pblk_setup_line_meta(struct pblk *pblk, struct pblk_line *line,
   if (geo->version == NVM_OCSSD_SPEC_12)
     nr_bad_chks = pblk_setup_line_meta_12(pblk, line, chunk_meta);
   else
+    // nr_bad_chks : bad가 아닌 chunk 수
     nr_bad_chks = pblk_setup_line_meta_20(pblk, line, chunk_meta);
 
   chk_in_line = lm->blk_per_line - nr_bad_chks;
   if (nr_bad_chks < 0 || nr_bad_chks > lm->blk_per_line ||
       chk_in_line < lm->min_blk_line) {
     line->state = PBLK_LINESTATE_BAD;
+    // l_mg->bad_list 에 line->list 추가
     list_add_tail(&line->list, &l_mg->bad_list);
     return 0;
   }
@@ -819,6 +831,7 @@ static int pblk_alloc_line_meta(struct pblk *pblk, struct pblk_line *line) {
   if (!line->erase_bitmap)
     goto free_blk_bitmap;
 
+  // lm->blk_per_line 인 이유 : block per line = chunk per line
   line->chks =
       kmalloc(lm->blk_per_line * sizeof(struct nvm_chk_meta), GFP_KERNEL);
   if (!line->chks)
@@ -839,6 +852,14 @@ free_blk_bitmap:
   return -ENOMEM;
 }
 
+/*
+  l_mg init
+  line 수 = chunk 수 (여기서는 lun 당 chunk 수 = 4)
+  gc_list[4] init
+  line별 smeta, emeta allocation
+  line별 vsc_list init
+  l_mg->bb_template set
+*/
 static int pblk_line_mg_init(struct pblk *pblk) {
   struct nvm_tgt_dev *dev = pblk->dev;
   struct nvm_geo *geo = &dev->geo;
@@ -848,8 +869,12 @@ static int pblk_line_mg_init(struct pblk *pblk) {
 
   l_mg->nr_lines = geo->num_chk;
   l_mg->log_line = l_mg->data_line = NULL;
+  // log line seq num = data line seq num = 0
   l_mg->l_seq_nr = l_mg->d_seq_nr = 0;
+  // free line count = 0
   l_mg->nr_free_lines = 0;
+
+  // meta_bitmap의 4 bit 를 0으로
   bitmap_zero(&l_mg->meta_bitmap, PBLK_DATA_LINES);
 
   INIT_LIST_HEAD(&l_mg->free_list);
@@ -864,6 +889,7 @@ static int pblk_line_mg_init(struct pblk *pblk) {
 
   INIT_LIST_HEAD(&l_mg->emeta_list);
 
+  // gc_lists
   l_mg->gc_lists[0] = &l_mg->gc_werr_list;
   l_mg->gc_lists[1] = &l_mg->gc_high_list;
   l_mg->gc_lists[2] = &l_mg->gc_mid_list;
@@ -873,6 +899,8 @@ static int pblk_line_mg_init(struct pblk *pblk) {
   spin_lock_init(&l_mg->close_lock);
   spin_lock_init(&l_mg->gc_lock);
 
+  /* vsc_list : Valid sector counts for all lines */
+  // vsc_list[0] : vsc for line 0 ...
   l_mg->vsc_list = kcalloc(l_mg->nr_lines, sizeof(__le32), GFP_KERNEL);
   if (!l_mg->vsc_list)
     goto fail;
@@ -888,6 +916,7 @@ static int pblk_line_mg_init(struct pblk *pblk) {
   /* smeta is always small enough to fit on a kmalloc memory allocation,
    * emeta depends on the number of LUNs allocated to the pblk instance
    */
+  // line 별 smeta 할당
   for (i = 0; i < PBLK_DATA_LINES; i++) {
     l_mg->sline_meta[i] = kmalloc(lm->smeta_len, GFP_KERNEL);
     if (!l_mg->sline_meta[i])
@@ -904,6 +933,7 @@ static int pblk_line_mg_init(struct pblk *pblk) {
     if (!emeta)
       goto fail_free_emeta;
 
+    // emeta size에 따라 할당 방식 변경
     if (lm->emeta_len[0] > KMALLOC_MAX_CACHE_SIZE) {
       l_mg->emeta_alloc_type = PBLK_VMALLOC_META;
 
@@ -912,8 +942,10 @@ static int pblk_line_mg_init(struct pblk *pblk) {
         kfree(emeta);
         goto fail_free_emeta;
       }
-
+      /* nr_entries : Number of emeta entries */
+      /* emeta_sect : emeta total sector 수 */
       emeta->nr_entries = lm->emeta_sec[0];
+
       l_mg->eline_meta[i] = emeta;
     } else {
       l_mg->emeta_alloc_type = PBLK_KMALLOC_META;
@@ -929,10 +961,14 @@ static int pblk_line_mg_init(struct pblk *pblk) {
     }
   }
 
+  // 각 라인의 vsc 를 ~0U(1111 1111 1111 1111 1111 1111 1111 1111)으로 설정
   for (i = 0; i < l_mg->nr_lines; i++)
     l_mg->vsc_list[i] = cpu_to_le32(EMPTY_ENTRY);
 
   bb_distance = (geo->all_luns) * geo->ws_opt;
+  // bb distance 만큼 띄우면서 l_mg->bb_template의 i부터 geo->ws_opt 만큼을 set
+  // 한다.
+  // ex) 1111 0011 1100 1111 0011 1100 1111 ...
   for (i = 0; i < lm->sec_per_line; i += bb_distance)
     bitmap_set(l_mg->bb_template, i, geo->ws_opt);
 
@@ -965,21 +1001,31 @@ static int pblk_line_meta_init(struct pblk *pblk) {
   unsigned int smeta_len, emeta_len;
   int i;
 
+  // sector per chunk * lun number
+  // 각 lun의 chunk 의 모음 = line 인 것 같다
   lm->sec_per_line = geo->clba * geo->all_luns;
+  // line 당 block 수는 lun 수
   lm->blk_per_line = geo->all_luns;
   lm->blk_bitmap_len = BITS_TO_LONGS(geo->all_luns) * sizeof(long);
   lm->sec_bitmap_len = BITS_TO_LONGS(lm->sec_per_line) * sizeof(long);
   lm->lun_bitmap_len = BITS_TO_LONGS(geo->all_luns) * sizeof(long);
+  // mid threshold = line 절반
   lm->mid_thrs = lm->sec_per_line / 2;
+  // high threshold = line 의 1/4
   lm->high_thrs = lm->sec_per_line / 4;
+  // data와 meta data 사이의 distance
   lm->meta_distance = (geo->all_luns / 2) * pblk->min_write_pgs;
 
   /* Calculate necessary pages for smeta. See comment over struct
    * line_smeta definition
    */
   i = 1;
+
+// smeta의 sector수와 smeta의 len을 계산한다.
 add_smeta_page:
+  /* smeta_sec : Sectors needed for smeta */
   lm->smeta_sec = i * geo->ws_opt;
+  /* smeta_sec * sector size */
   lm->smeta_len = lm->smeta_sec * geo->csecs;
 
   smeta_len = sizeof(struct line_smeta) + lm->lun_bitmap_len;
@@ -992,6 +1038,14 @@ add_smeta_page:
    * line_emeta definition
    */
   i = 1;
+// emeta의 sector 수와 emeta len을 계산한다.
+/* Lengths/sectors for emeta:
+ *  [0]: Total
+ *  [1]: struct line_emeta +
+ *       bb_bitmap + struct wa_counters
+ *  [2]: L2P portion
+ *  [3]: vsc
+ */
 add_emeta_page:
   lm->emeta_sec[0] = i * geo->ws_opt;
   lm->emeta_len[0] = lm->emeta_sec[0] * geo->csecs;
@@ -1002,8 +1056,11 @@ add_emeta_page:
     goto add_emeta_page;
   }
 
+  /* emeta_bb : Boundary for bb that affects emeta */
+  // 뭐하는거지?
   lm->emeta_bb = geo->all_luns > i ? geo->all_luns - i : 0;
 
+  // line의 최소 good block 수를 설정
   lm->min_blk_line = 1;
   if (geo->all_luns > 1)
     lm->min_blk_line +=
@@ -1024,25 +1081,45 @@ static int pblk_lines_init(struct pblk *pblk) {
   void *chunk_meta;
   long nr_free_chks = 0;
   int i, ret;
-
+  /*
+    lm init
+    smeta sector size와 smeta len init
+    emeta sector size와 emeta len init
+    min block per line init
+  */
   ret = pblk_line_meta_init(pblk);
   if (ret)
     return ret;
-
+  /*
+    l_mg init
+    line 수 = chunk 수 (여기서는 lun 당 chunk 수 = 4)
+    gc_list[4] init
+    line별 smeta, emeta allocation
+    line별 vsc_list init
+    l_mg->bb_template set
+  */
   ret = pblk_line_mg_init(pblk);
   if (ret)
     return ret;
 
+  /*
+    pblk->luns allocation
+    lunid 계산
+    pblk->luns[i] = dev->luns[lunid]
+  */
   ret = pblk_luns_init(pblk);
   if (ret)
     goto fail_free_meta;
 
+  // nvme device로부터 chunk meta data를 불러온다
+  // Get information for all chunks from the device.
   chunk_meta = pblk_chunk_get_meta(pblk);
   if (IS_ERR(chunk_meta)) {
     ret = PTR_ERR(chunk_meta);
     goto fail_free_luns;
   }
 
+  // pblk->lines allocation
   pblk->lines = kcalloc(l_mg->nr_lines, sizeof(struct pblk_line), GFP_KERNEL);
   if (!pblk->lines) {
     ret = -ENOMEM;
@@ -1052,6 +1129,9 @@ static int pblk_lines_init(struct pblk *pblk) {
   for (i = 0; i < l_mg->nr_lines; i++) {
     line = &pblk->lines[i];
 
+    /*
+      pblk->lines[i]->blk_bitmap, erase_bitmap, chks, w_err_gc allocation
+    */
     ret = pblk_alloc_line_meta(pblk, line);
     if (ret)
       goto fail_free_lines;
@@ -1064,6 +1144,7 @@ static int pblk_lines_init(struct pblk *pblk) {
     return -EINTR;
   }
 
+  // provision 설정
   pblk_set_provision(pblk, nr_free_chks);
 
   kfree(chunk_meta);

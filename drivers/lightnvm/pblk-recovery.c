@@ -16,6 +16,7 @@
 
 #include "pblk.h"
 
+// line의 end meta data와 pblk의 line meta data의 crc를 비교한다.
 int pblk_recov_check_emeta(struct pblk *pblk, struct line_emeta *emeta_buf) {
   u32 crc;
 
@@ -29,6 +30,7 @@ int pblk_recov_check_emeta(struct pblk *pblk, struct line_emeta *emeta_buf) {
   return 0;
 }
 
+// end meta로부터
 static int pblk_recov_l2p_from_emeta(struct pblk *pblk,
                                      struct pblk_line *line) {
   struct nvm_tgt_dev *dev = pblk->dev;
@@ -41,40 +43,55 @@ static int pblk_recov_l2p_from_emeta(struct pblk *pblk,
   u64 nr_valid_lbas, nr_lbas = 0;
   u64 i;
 
+  // end meta로부터 lba list를 가져온다
   lba_list = emeta_to_lbas(pblk, emeta_buf);
   if (!lba_list)
     return 1;
 
+  // start meta의 시작점을 찾고 smeta 섹터 수만큼 더해서 data 의 시작점을
+  // 찾는다.
   data_start = pblk_line_smeta_start(pblk, line) + lm->smeta_sec;
+  // data 끝 : end meta 시작점
   data_end = line->emeta_ssec;
+  // 사용가능한 lba 수
   nr_valid_lbas = le64_to_cpu(emeta_buf->nr_valid_lbas);
 
   for (i = data_start; i < data_end; i++) {
     struct ppa_addr ppa;
     int pos;
 
+    //주어진 line의 ppa를 만든다. (데이터 1개 당 분리된 ppa)
     ppa = addr_to_gen_ppa(pblk, i, line->id);
+
+    // ppa.a.lun * geo->num_ch + ppa.a.ch
     pos = pblk_ppa_to_pos(geo, ppa);
 
     /* Do not update bad blocks */
     if (test_bit(pos, line->blk_bitmap))
       continue;
 
+    // lba_list[i]가 빈 주소일 경우
     if (le64_to_cpu(lba_list[i]) == ADDR_EMPTY) {
       spin_lock(&line->lock);
+      // line에 invalid 체크를 하고 오류 출력
       if (test_and_set_bit(i, line->invalid_bitmap))
         WARN_ONCE(1, "pblk: rec. double invalidate:\n");
       else
+        //이미 invalid 체크가 되어 있는 경우
+        // line의 valid sector count -1
         le32_add_cpu(line->vsc, -1);
       spin_unlock(&line->lock);
 
       continue;
     }
 
+    // map update
     pblk_update_map(pblk, le64_to_cpu(lba_list[i]), ppa);
+    // line에서 map 된 lba 수 증가
     nr_lbas++;
   }
 
+  //모든 lba를 recover하지 못한 경우
   if (nr_valid_lbas != nr_lbas)
     pr_err("pblk: line %d - inconsistent lba list(%llu/%llu)\n", line->id,
            nr_valid_lbas, nr_lbas);
@@ -737,6 +754,7 @@ static void pblk_recov_wa_counters(struct pblk *pblk,
                                    struct line_emeta *emeta) {
   struct pblk_line_meta *lm = &pblk->lm;
   struct line_header *header = &emeta->header;
+  // Write amplification counter
   struct wa_counters *wa = emeta_to_wa(lm, emeta);
 
   /* WA counters were introduced in emeta version 0.2 */
@@ -759,10 +777,12 @@ static int pblk_line_was_written(struct pblk_line *line,
                                  struct pblk_line_meta *lm) {
 
   int i;
+  // 1000 | 0001 = 1001
   int state_mask = NVM_CHK_ST_OFFLINE | NVM_CHK_ST_FREE;
 
   for (i = 0; i < lm->blk_per_line; i++) {
     // chunk의 상태가  NVM_CHK_ST_OFFLINE | NVM_CHK_ST_FREE 가 아니라면 return 1
+    // chunk 상태가 NVM_CHK_ST_OPEN | NVM_CHK_ST_CLOSED 일 때
     if (!(line->chks[i].state & state_mask))
       return 1;
   }
@@ -784,21 +804,31 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
   LIST_HEAD(recov_list);
 
   /* TODO: Implement FTL snapshot */
+  // 해야 할 것
+  // 1.
 
   /* Scan recovery - takes place when FTL snapshot fails */
   spin_lock(&l_mg->free_lock);
+
+  //  bitmap_zero(&l_mg->meta_bitmap, PBLK_DATA_LINES);
+  // meta line은 총 4개 뿐 = data line 수 4개
   // find_first_zero_bit(unsigned long *addr, unsigned long size) :
   // addr부터 시작해서 size(bit단위) 만큼 검색하면서 첫번째 cleared bit를 찾는
   // 함수
+  // l_mg->meta_bitmap 의 4비트 중 첫번 째 cleared bit 찾음 index 반환
   meta_line = find_first_zero_bit(&l_mg->meta_bitmap, PBLK_DATA_LINES);
-  // l_mg->meta_bitmap 의 meta_line 번째 bit를 set 한다.
+  // 찾은 첫번째 0 bit을 set 한다.
   set_bit(meta_line, &l_mg->meta_bitmap);
+
+  //논문 : 블록이 열리면 첫 번째 페이지가 이전 블록에 대한 참조와 함께 블록
+  //시퀀스 번호를 저장하는 데 사용된다.
   // meta_line 번째 start line meta data와 end line meta data를 가져온다.
   smeta = l_mg->sline_meta[meta_line];
   emeta = l_mg->eline_meta[meta_line];
   smeta_buf = (struct line_smeta *)smeta;
   spin_unlock(&l_mg->free_lock);
 
+  //블록 정렬, 완전히 쓰여진 블록 -> 부분작성 블록
   /* Order data lines using their sequence number */
   for (i = 0; i < l_mg->nr_lines; i++) {
     u32 crc;
@@ -809,10 +839,12 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
     // smeta를 reset한다.
     memset(smeta, 0, lm->smeta_len);
     line->smeta = smeta;
-    // ???
+    // start meta data 주소 + start meta data 크기
     line->lun_bitmap = ((void *)(smeta_buf)) + sizeof(struct line_smeta);
 
     // line 상태 체크
+    // line의 chunk 중 상태가 하나라도 NVM_CHK_ST_OPEN, NVM_CHK_ST_CLOSED 상태
+    // 이면 다음으로 넘어감
     if (!pblk_line_was_written(line, lm))
       continue;
 
@@ -841,6 +873,7 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
     /* The first valid instance uuid is used for initialization */
     // uuid 초기화
     if (!valid_uuid) {
+      // smeta_buf->header.uuid => pblk->instance_uuid
       memcpy(pblk->instance_uuid, smeta_buf->header.uuid, 16);
       valid_uuid = 1;
     }
@@ -875,6 +908,7 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
     if (pblk_line_recov_alloc(pblk, line))
       goto out;
 
+    // sequence number를 이용해 line 정렬
     pblk_recov_line_add_ordered(&recov_list, line);
     found_lines++;
     pr_debug("pblk: recovering data line %d, seq:%llu\n", line->id,
@@ -892,6 +926,7 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
     goto out;
   }
 
+  // L2P 테이블을 recover하고 GC 설정
   /* Verify closed blocks and recover this portion of L2P table*/
   list_for_each_entry_safe(line, tline, &recov_list, list) {
     recovered_lines++;
@@ -900,37 +935,50 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
     line->emeta = emeta;
     memset(line->emeta->buf, 0, lm->emeta_len[0]);
 
+    // line의 emeta를 장치로부터 읽어온다
+    // emeta에서 읽어오는 데 오류 발생시 oob로부터 recover
     if (pblk_line_read_emeta(pblk, line, line->emeta->buf)) {
       pblk_recov_l2p_from_oob(pblk, line);
       goto next;
     }
-
+    // emeta 체크, 오류발생 시 oob로부터 recover
+    // emeta crc 체크
     if (pblk_recov_check_emeta(pblk, line->emeta->buf)) {
       pblk_recov_l2p_from_oob(pblk, line);
       goto next;
     }
 
+    // line->emeta->buf->header->version_major != EMETA_VERSION_MAJOR 인 경우
     if (pblk_recov_check_line_version(pblk, line->emeta->buf))
       return ERR_PTR(-EINVAL);
 
+    // ??
     pblk_recov_wa_counters(pblk, line->emeta->buf);
 
+    // end meta로부터 l2p table recover
     if (pblk_recov_l2p_from_emeta(pblk, line))
+      //실패했을 경우
       pblk_recov_l2p_from_oob(pblk, line);
 
   next:
+    // line 상태가 full 인경우 ( return line->left_msecs == 0 )
     if (pblk_line_is_full(line)) {
       struct list_head *move_list;
 
       spin_lock(&line->lock);
+      // line state 변경
       line->state = PBLK_LINESTATE_CLOSED;
+      // line의 GC 상태를 설정하고 각 설정에 해당하는 GC list를 가져온다
       move_list = pblk_line_gc_list(pblk, line);
       spin_unlock(&line->lock);
 
       spin_lock(&l_mg->gc_lock);
+      // line을 GC list의 끝에 추가
       list_move_tail(&line->list, move_list);
       spin_unlock(&l_mg->gc_lock);
 
+      // ??
+      // unsigned long *map_bitmap;     /* Bitmap for mapped sectors in line */
       kfree(line->map_bitmap);
       line->map_bitmap = NULL;
       line->smeta = NULL;
@@ -946,13 +994,18 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
   }
 
   spin_lock(&l_mg->free_lock);
+  // open line이 없는 경우 : 모든 라인 valid
   if (!open_lines) {
+    // meta_bitmap의 meta_line번째 비트 reset
     WARN_ON_ONCE(!test_and_clear_bit(meta_line, &l_mg->meta_bitmap));
     pblk_line_replace_data(pblk);
   } else {
     /* Allocate next line for preparation */
+    // free 상태인 첫번째 line을 가져온다
     l_mg->data_next = pblk_line_get(pblk);
     if (l_mg->data_next) {
+      // 새로운 line에 data sequence number를 붙여주고 type을 DATA 로
+      // 지정해준다.
       l_mg->data_next->seq_nr = l_mg->d_seq_nr++;
       l_mg->data_next->type = PBLK_LINETYPE_DATA;
       is_next = 1;
@@ -961,6 +1014,7 @@ struct pblk_line *pblk_recov_l2p(struct pblk *pblk) {
   spin_unlock(&l_mg->free_lock);
 
   if (is_next)
+    // line의 지워야하는 block 삭제
     pblk_line_erase(pblk, l_mg->data_next);
 
 out:
@@ -968,6 +1022,7 @@ out:
     pr_err("pblk: failed to recover all found lines %d/%d\n", found_lines,
            recovered_lines);
 
+  //모든 라인들 recover하고 free 상태인 첫 라인을 반환
   return data_line;
 }
 

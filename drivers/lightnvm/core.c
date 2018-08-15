@@ -675,6 +675,7 @@ static void nvm_map_to_tgt(struct nvm_tgt_dev *tgt_dev, struct ppa_addr *p) {
   p->a.lun -= lun_roff;
 }
 
+// ppa를 device addr로 변경
 static void nvm_ppa_tgt_to_dev(struct nvm_tgt_dev *tgt_dev,
                                struct ppa_addr *ppa_list, int nr_ppas) {
   int i;
